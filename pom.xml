@@ -55,10 +55,11 @@
                     <instructions>
                         <Export-Package>!*</Export-Package>
                         <Import-Package>
-                            *
+                            *;resolution:=optional
                         </Import-Package>
                         <Private-Package>
-                            net.nanthrax.example.patch
+                            net.nanthrax.example.patch*,
+                            org.apache.karaf.util.bundles
                         </Private-Package>
                         <Bundle-Activator>net.nanthrax.example.patch.Patcher</Bundle-Activator>
                     </instructions>
