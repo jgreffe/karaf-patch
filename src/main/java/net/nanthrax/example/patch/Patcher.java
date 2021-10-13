@@ -11,6 +11,7 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import net.nanthrax.example.patch.exception.FeaturesCoreException;
 import net.nanthrax.example.patch.log.PatchLogger;
 import net.nanthrax.example.patch.services.PatcherServices;
 import org.apache.karaf.bundle.core.BundleService;
@@ -35,36 +36,63 @@ public class Patcher implements BundleActivator {
 
     @Override
     public void start(BundleContext bundleContext) throws Exception {
-        this.bundleContext = bundleContext;
-        services = new PatcherServices(bundleContext);
+        try {
+            this.bundleContext = bundleContext;
+            services = new PatcherServices(bundleContext);
 
-        log.info("Patching with " + PATCH_VERSION);
-        updateSystem();
-        updateBundles();
-        repoRefresh();
-        updateFeatures();
+            log.info("Patching with " + PATCH_VERSION);
+            setupCamelOnce();
+            updateSystem();
+            updateBundles();
+            repoRefresh();
+            updateFeatures();
+            log.info("Patch applied successfully");
+        } catch (FeaturesCoreException ignored) {
+            log.warn("Restarting bundle");
+        }
     }
 
     @Override
     public void stop(BundleContext bundleContext) throws Exception {
-        // nothing to do
+        services.stop();
+        log.info("** Stopping");
+    }
+
+    void setupCamelOnce() throws Exception {
+        if (getFeaturesService().getFeature("camel-core") == null) {
+            log.info("Setting up camel once");
+            copySystem("apache-camel-2.23.1-features.xml",
+                    "org/apache/camel/karaf/apache-camel/2.23.1");
+            getFeaturesService().addRepository(new URI("mvn:org.apache.camel.karaf/apache-camel/2.23.1/xml/features"));
+            getFeaturesService().installFeature("camel-core");
+        } else {
+            log.info("No need to setup camel");
+        }
     }
 
     void updateSystem() throws Exception {
         log.info("* Updating system repository");
         copySystem("org.apache.karaf.features.core-4.2.7.tesb1.jar",
                 "org/apache/karaf/features/org.apache.karaf.features.core/4.2.7.tesb1");
+        copySystem("camel-core-2.23.1.tesb2.jar",
+                "org/apache/camel/camel-core/2.23.1.tesb2");
         copySystem("standard-4.2.7-features.xml", "org/apache/karaf/features/standard/4.2.7");
         copySystem("framework-4.2.7-features.xml", "org/apache/karaf/features/framework/4.2.7");
+        copySystem("apache-camel-2.23.1.tesb1-features.xml", "apache-camel-2.23.1-features.xml",
+                "org/apache/camel/karaf/apache-camel/2.23.1");
     }
 
     void copySystem(String classLoaderPath, String systemPath) throws Exception {
+        copySystem(classLoaderPath, classLoaderPath, systemPath);
+    }
+
+    void copySystem(String classLoaderPath, String newName, String systemPath) throws Exception {
         InputStream stream = this.getClass().getClassLoader()
                 .getResourceAsStream("system/" + classLoaderPath);
         File system = new File(System.getProperty("karaf.base"), "system");
         File target = new File(system, systemPath);
         target.mkdirs();
-        File file = new File(target, classLoaderPath);
+        File file = new File(target, newName);
         Files.copy(stream, file.toPath(), REPLACE_EXISTING);
     }
 
@@ -103,6 +131,11 @@ public class Patcher implements BundleActivator {
             }
             FrameworkWiring wiring = bundleContext.getBundle(0).adapt(FrameworkWiring.class);
             wiring.refreshBundles(Collections.singletonList(featuresCore));
+
+            if ("org.apache.karaf.features.core".equals(symbolicName)) {
+                throw new FeaturesCoreException();
+            }
+
         } else {
             log.info("Already up-to-date");
         }
@@ -128,8 +161,12 @@ public class Patcher implements BundleActivator {
 
     void updateFeatures() throws Exception {
         log.info("** Updating features");
-        log.info("*** Installing webconsole feature");
-        getFeaturesService().installFeature("webconsole");
+        installFeature("camel-core");
+    }
+    
+    void installFeature(String feature) throws Exception {
+        log.info("*** Installing {} feature", feature);
+        getFeaturesService().installFeature(feature);
     }
 
     String getBundleLocation(Bundle bundle) {
